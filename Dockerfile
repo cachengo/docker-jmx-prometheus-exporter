@@ -1,15 +1,32 @@
-FROM anapsix/alpine-java:8
-MAINTAINER sscaling <sscaling@users.noreply.github.com>
+FROM maven:3.6-jdk-11 as builder
+COPY VERSION /VERSION
+
+RUN git clone https://github.com/prometheus/jmx_exporter.git \
+    && cd jmx_exporter \
+    && VERSION=$(cat /VERSION) \
+    && git checkout parent-$VERSION \
+    && mvn package \
+    && cp /jmx_exporter/jmx_prometheus_httpserver/target/jmx_prometheus_httpserver-${VERSION}-jar-with-dependencies.jar /jmx_prometheus_httpserver.jar
+
+RUN apt-get update \
+    && apt-get install -y make musl-tools \
+    && git clone https://github.com/Yelp/dumb-init.git \
+    && cd dumb-init \
+    && git checkout v1.2.1 \
+    && CC=musl-gcc make
+
+FROM openjdk:8-alpine
 
 RUN apk update && apk upgrade && apk --update add curl && rm -rf /tmp/* /var/cache/apk/*
 
-ENV VERSION 0.11.0
-ENV JAR jmx_prometheus_httpserver-$VERSION-jar-with-dependencies.jar
+ENV JAR jmx_prometheus_httpserver.jar
 
-RUN curl --insecure -L https://github.com/Yelp/dumb-init/releases/download/v1.2.1/dumb-init_1.2.1_amd64 -o usr/local/bin/dumb-init && chmod +x /usr/local/bin/dumb-init
+COPY --from=builder /dumb-init/dumb-init /usr/local/bin/dumb-init
 
+RUN chmod +x /usr/local/bin/dumb-init
 RUN mkdir -p /opt/jmx_exporter
-RUN curl -L https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_httpserver/$VERSION/$JAR -o /opt/jmx_exporter/$JAR
+
+COPY --from=builder /$JAR /opt/jmx_exporter/$JAR
 COPY start.sh /opt/jmx_exporter/
 COPY config.yml /opt/jmx_exporter/
 
